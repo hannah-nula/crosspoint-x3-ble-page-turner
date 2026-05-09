@@ -6,6 +6,18 @@ This is a community CrossPoint Reader fork build for the XTEink X3 with
 Bluetooth HID page-turner support. It was validated with a Free3/Free3-ER-style
 remote.
 
+## Upstream Base
+
+Based on upstream
+[`crosspoint-reader/crosspoint-reader`](https://github.com/crosspoint-reader/crosspoint-reader)
+commit
+[`b8a6b58b5ee21a2b5b9a53f7ed5366fc858d137c`](https://github.com/crosspoint-reader/crosspoint-reader/commit/b8a6b58b5ee21a2b5b9a53f7ed5366fc858d137c)
+from 2026-05-04. `git describe` reports that base as
+`1.2.0-94-gb8a6b58`, meaning 94 commits after upstream CrossPoint `1.2.0`.
+
+This release is versioned as `1.2.0-x3-ble-idlefix15`: upstream CrossPoint's
+`1.2.0` line plus this fork's X3 BLE page-turner changes.
+
 ## Download
 
 Use the release asset:

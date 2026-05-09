@@ -5,9 +5,15 @@ XTEink X3. It was built and hardware-validated with a Free3/Free3-ER-style BLE
 page turner after a sequence of reconnect and long-idle fixes.
 
 The fork is based on upstream `crosspoint-reader/crosspoint-reader` at commit
-`b8a6b58` (`docs: expand first use of OPDS acronym and provide a wikipedia
-link (#1824)`), with the firmware version changed to
-`1.2.0-x3-ble-idlefix15`.
+[`b8a6b58b5ee21a2b5b9a53f7ed5366fc858d137c`](https://github.com/crosspoint-reader/crosspoint-reader/commit/b8a6b58b5ee21a2b5b9a53f7ed5366fc858d137c)
+(`docs: expand first use of OPDS acronym and provide a wikipedia link
+(#1824)`, dated 2026-05-04). In Git terms, that upstream base describes as
+`1.2.0-94-gb8a6b58`, meaning 94 commits after the upstream `1.2.0` tag.
+
+This fork is versioned as `1.2.0-x3-ble-idlefix15`. It starts from that
+upstream CrossPoint `1.2.0` line, then adds the X3 BLE page-turner work
+described here. It is not based on the separate unofficial CrossPoint-BLE fork,
+and it is not an official upstream CrossPoint release.
 
 ## What Changed
 
@@ -177,4 +183,3 @@ python3 scripts/diagnose_x3_usb_visibility.py
 
 The helper skips the known Jieli USB VID/PID used by some remotes and requires
 `esptool --chip esp32c3 chip-id` to pass before writing flash.
-

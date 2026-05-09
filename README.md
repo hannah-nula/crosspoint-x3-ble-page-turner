@@ -13,10 +13,27 @@ Xteink firmware. It aims to match or improve upon the standard EPUB reading expe
 
 ![](./docs/images/cover.jpg)
 
+## Upstream Base
+
+This fork is based on the upstream
+[`crosspoint-reader/crosspoint-reader`](https://github.com/crosspoint-reader/crosspoint-reader)
+repository at this exact commit:
+
+- Commit: [`b8a6b58b5ee21a2b5b9a53f7ed5366fc858d137c`](https://github.com/crosspoint-reader/crosspoint-reader/commit/b8a6b58b5ee21a2b5b9a53f7ed5366fc858d137c)
+- Upstream position: `1.2.0-94-gb8a6b58`, meaning 94 commits after the
+  upstream `1.2.0` tag
+- Commit date: 2026-05-04
+- Commit title: `docs: expand first use of OPDS acronym and provide a wikipedia link (#1824)`
+
+The firmware in this fork is versioned as `1.2.0-x3-ble-idlefix15`: it starts
+from that upstream CrossPoint `1.2.0` line, then adds the X3 BLE page-turner
+work documented below. It is not based on the separate unofficial
+CrossPoint-BLE fork, and it is not an official upstream CrossPoint release.
+
 ## What Is Different In This Fork?
 
-This repo is based on upstream CrossPoint Reader commit `b8a6b58` and adds the
-validated `1.2.0-x3-ble-idlefix15` X3 BLE page-turner work.
+Starting from the upstream base above, this fork adds the validated
+`1.2.0-x3-ble-idlefix15` X3 BLE page-turner work.
 
 Highlights:
 
