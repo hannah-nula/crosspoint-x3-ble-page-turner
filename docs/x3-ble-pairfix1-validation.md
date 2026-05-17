@@ -74,7 +74,7 @@ hardware checklist for anyone validating pairfix1 on device:
 
 | Gate | Steps | Expected Result | Status |
 | --- | --- | --- | --- |
-| Flash | Run `scripts/flash_record_x3_ble_pairfix1.sh` | Both app slots write and explicit `verify-flash` checks pass | Pending |
+| Flash | Run `scripts/flash_record_x3_ble_pairfix1.sh` | Both app slots write and explicit `verify-flash` checks pass | Passed 2026-05-17: app0 and app1 write plus explicit `verify-flash` succeeded |
 | Boot | Start the X3 after flashing pairfix1 | CrossPoint UI appears and stays responsive for at least 2 minutes | Pending |
 | Existing reconnect | With an already saved Free3, use `Reconnect Remote` if needed | Reconnect succeeds without freeze/reboot | Pending |
 | Pair new remote | Settings -> Bluetooth -> `Pair New Remote` while Free2/Free3 is awake/pairing | Remote pairs, menu reports `Paired ...`, and the bond is saved | Pending |
