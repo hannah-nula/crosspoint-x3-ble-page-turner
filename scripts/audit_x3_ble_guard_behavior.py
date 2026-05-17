@@ -107,9 +107,10 @@ def main() -> int:
         "if (automatic)",
         "setAutoReconnectGuard(true)",
         "scanForBondedReconnectCandidate(candidate, scanMs)",
-        "success = connectToDevice(candidate.address, timeoutMs, candidate.addressType)",
+        "success = connectToDevice(candidate.address, timeoutMs, candidate.addressType, candidate.name)",
         "if (success)",
-        "armAutoReconnect(automatic ? \"auto_reconnect_success\" : \"manual_reconnect_success\", !automatic)",
+        "armAutoReconnect(pairNew ? \"pair_new_success\"",
+        "\"manual_reconnect_success\")",
         "if (automatic)",
         "setAutoReconnectGuard(false)",
     ]), "automatic reconnect has a persistent in-flight guard and manual success clears guarded mode", failures)
@@ -125,8 +126,10 @@ def main() -> int:
 
     require("btMgr->startBondedReconnect(12000)" in settings_select,
             "Bluetooth settings still expose manual Reconnect Remote", failures)
-    require("Scan disabled: unstable on X3" in settings,
-            "unstable manual device scanning remains disabled on the X3 candidate", failures)
+    require("Pair New Remote" in settings and "btMgr->startPairNewRemote(12000)" in settings,
+            "Bluetooth settings expose worker-based Pair New Remote", failures)
+    require("Scan Disabled" not in settings and "Scan disabled" not in settings,
+            "old disabled scan menu text is gone", failures)
 
     if failures:
         print(f"\n{len(failures)} guard behavior check(s) failed.")

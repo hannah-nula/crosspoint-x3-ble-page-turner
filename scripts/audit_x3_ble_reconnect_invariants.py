@@ -80,11 +80,12 @@ def main() -> int:
 
     require(appears_in_order(reconnect_task, [
         "scanForBondedReconnectCandidate(candidate, scanMs)",
-        "success = connectToDevice(candidate.address, timeoutMs, candidate.addressType);",
+        "success = connectToDevice(candidate.address, timeoutMs, candidate.addressType, candidate.name);",
         "if (success)",
         "_bondedDeviceAddress = candidate.address;",
         "_bondedDeviceAddressType = candidate.addressType;",
-        "armAutoReconnect(automatic ? \"auto_reconnect_success\" : \"manual_reconnect_success\", !automatic)",
+        "armAutoReconnect(pairNew ? \"pair_new_success\"",
+        "\"manual_reconnect_success\")",
     ]), "successful reconnect updates bonded address/type before re-arming reconnect", failures)
 
     require(appears_in_order(auto_reconnect, [

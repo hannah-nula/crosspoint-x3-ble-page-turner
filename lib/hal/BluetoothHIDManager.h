@@ -89,14 +89,17 @@ public:
   std::vector<BluetoothDevice> getDiscoveredDevices() const;
 
   // Connection
-  bool connectToDevice(const std::string& address, uint32_t timeoutMs = 10000, uint8_t addressType = 0xFF);
+  bool connectToDevice(const std::string& address, uint32_t timeoutMs = 10000, uint8_t addressType = 0xFF,
+                       const std::string& nameHint = "");
   bool disconnectFromDevice(const std::string& address);
   bool isConnected(const std::string& address) const;
   std::vector<std::string> getConnectedDevices() const;
+  bool startPairNewRemote(uint32_t timeoutMs = 12000);
   bool startBondedReconnect(uint32_t timeoutMs = 6000, bool automatic = false);
   BluetoothReconnectStatus getReconnectStatus();
   bool consumeReconnectResult(bool& success, std::string& message);
   bool isBondedReconnectInProgress() const { return _reconnectJobRunning; }
+  bool isPairingInProgress() const { return _reconnectJobRunning && _reconnectJobPairNew; }
   bool isAutoReconnectArmed() const { return _autoReconnectArmed && !_autoReconnectDisabledThisBoot; }
 
   // Input handling
@@ -109,6 +112,9 @@ public:
   void setDebugCaptureEnabled(bool enabled) { _debugCaptureEnabled = enabled; }
   bool isDebugCaptureEnabled() const { return _debugCaptureEnabled; }
   void setBondedDevice(const std::string& address, const std::string& name = "", uint8_t addressType = 0);
+  std::string getBondedDeviceAddress() const { return _bondedDeviceAddress; }
+  std::string getBondedDeviceName() const { return _bondedDeviceName; }
+  uint8_t getBondedDeviceAddressType() const { return _bondedDeviceAddressType; }
   void updateActivity();  // Call periodically to check inactivity timeout
   void checkAutoReconnect(bool userInputDetected = false);  // Reconnect bonded device when disconnected
   void armAutoReconnectOnNextWake();  // Persist a one-shot reconnect request before intentional sleep
@@ -160,9 +166,12 @@ private:
   static void bondedReconnectTaskEntry(void* param);
   void runBondedReconnectTask();
   bool scanForBondedReconnectCandidate(BluetoothDevice& candidate, uint32_t scanMs);
+  bool scanForPairingCandidate(BluetoothDevice& candidate, uint32_t scanMs);
   bool findBondedReconnectCandidate(BluetoothDevice& candidate) const;
+  bool findPairingCandidate(BluetoothDevice& candidate);
   bool matchesBondedReconnectCandidate(const BluetoothDevice& device, const std::string& address,
                                        const std::string& name) const;
+  bool isHighConfidencePairingCandidate(const BluetoothDevice& device) const;
   uint16_t parseHIDReport(uint8_t* data, size_t length);
   ConnectedDevice* findConnectedDeviceLocked(const std::string& address);
   uint8_t mapKeycodeToButton(uint8_t keycode, ConnectedDevice* device);
@@ -199,6 +208,7 @@ private:
   uint32_t _reconnectJobTimeoutMs = 0;
   uint32_t _reconnectJobScanMs = 0;
   bool _reconnectJobAutomatic = false;
+  bool _reconnectJobPairNew = false;
   TaskHandle_t _reconnectTaskHandle = nullptr;
   QueueHandle_t _inputEventQueue = nullptr;
   QueueHandle_t _connectionEventQueue = nullptr;

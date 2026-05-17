@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Show the next actionable X3 BLE idlefix15 status."""
+"""Show the next actionable X3 BLE firmware status."""
 
 from __future__ import annotations
 
@@ -18,15 +18,22 @@ except ModuleNotFoundError:
 
 
 ROOT = Path(__file__).resolve().parents[1]
+LABEL = os.environ.get("X3_BLE_IMAGE_LABEL", "pairfix1")
 BIN = Path(os.environ.get(
     "X3_BLE_FIRMWARE_BIN",
-    str(Path.home() / "Downloads/crosspoint-x3-ble-idlefix15.bin"),
+    str(Path.home() / f"Downloads/crosspoint-x3-ble-{LABEL}.bin"),
 ))
 PIO_PYTHON = Path(os.environ.get("PIO_PYTHON", str(Path.home() / ".platformio/penv/bin/python")))
-EXPECTED_SHA256 = "5b23aee2453df26f35fc837ea580eedc3b7c8fa7deeb0f01092e9b7ff7b2949f"
-EXPECTED_SIZE = 0x5b62e0
+EXPECTED_SHA256 = os.environ.get(
+    "X3_BLE_EXPECTED_SHA256",
+    "1211423cfc4d96273a6528893effc584f9a33ac213a8ab56daf261d434f8eacd",
+)
+EXPECTED_SIZE = int(os.environ.get("X3_BLE_EXPECTED_SIZE", "0x5b7630"), 0)
 APP_PARTITION_SIZE = 0x640000
-VALIDATION_DOC = ROOT / "docs/x3-ble-idlefix15-hardware-validation.md"
+VALIDATION_DOC = Path(os.environ.get(
+    "X3_BLE_VALIDATION_DOC",
+    str(ROOT / f"docs/x3-ble-{LABEL}-validation.md"),
+))
 GATE_ORDER = [
     "Flash",
     "Boot",
@@ -57,8 +64,9 @@ def artifact_ok() -> bool:
     if len(data) >= APP_PARTITION_SIZE:
         print(f"artifact: too large for app partition 0x{len(data):x}")
         ok = False
-    if b"1.2.0-x3-ble-idlefix15" not in data:
-        print("artifact: idlefix15 version marker missing")
+    version_marker = f"1.2.0-x3-ble-{LABEL}".encode()
+    if version_marker not in data:
+        print(f"artifact: {LABEL} version marker missing")
         ok = False
     if ok:
         print(f"artifact: ok {BIN} sha={sha[:12]}... size=0x{len(data):x}")
@@ -154,11 +162,11 @@ def main() -> int:
 
     print()
     if not ok:
-        print("next: rebuild/package idlefix15 before flashing")
+        print(f"next: rebuild/package {LABEL} before flashing")
         return 1
     gate = next_pending_gate()
     if gate == "Flash" and ports:
-        print("next: flash and record with scripts/flash_record_x3_ble_idlefix15.sh")
+        print(f"next: flash and record with scripts/flash_record_x3_ble_{LABEL}.sh")
         return 0
     if gate:
         print(f"next: hardware validation gate '{gate}'")

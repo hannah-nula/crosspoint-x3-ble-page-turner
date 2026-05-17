@@ -10,8 +10,8 @@ The fork is based on upstream `crosspoint-reader/crosspoint-reader` at commit
 (#1824)`, dated 2026-05-04). In Git terms, that upstream base describes as
 `1.2.0-94-gb8a6b58`, meaning 94 commits after the upstream `1.2.0` tag.
 
-This fork is versioned as `1.2.0-x3-ble-idlefix15`. It starts from that
-upstream CrossPoint `1.2.0` line, then adds the X3 BLE page-turner work
+This fork is currently versioned as `1.2.0-x3-ble-pairfix1`. It starts from
+that upstream CrossPoint `1.2.0` line, then adds the X3 BLE page-turner work
 described here. It is not based on the separate unofficial CrossPoint-BLE fork,
 and it is not an official upstream CrossPoint release.
 
@@ -22,6 +22,7 @@ page-turner stack. This fork adds:
 
 - a NimBLE-based BLE HID manager, pinned to `h2zero/NimBLE-Arduino @ 2.5.0`;
 - a Bluetooth settings screen under Settings and from the reader menu;
+- a bounded `Pair New Remote` worker for first-time Free2/Free3-style setup;
 - bonded remote persistence in `/.crosspoint/settings.json`;
 - virtual button injection so BLE reports flow through the normal CrossPoint
   page-turn path;
@@ -88,6 +89,27 @@ Crash-loop guard:
 - manual `Reconnect Remote` remains available and can clear guarded mode after
   a successful reconnect.
 
+## Pair New Remote Behavior
+
+Pairfix1 restores first-time pairing without returning to the earlier unstable
+open-ended scan UI. `Pair New Remote`:
+
+- runs in the same BLE worker task shape as manual reconnect, not inside the UI
+  loop;
+- holds normal CPU speed while scanning, connecting, discovering HID reports,
+  and subscribing;
+- uses a finite active scan with scan-response support so Free2/Free3-style
+  names can be discovered;
+- skips the currently saved bonded remote while looking for a new one;
+- prefers known page-turner names such as Free2/Free3, GameBrick, mini
+  keyboard, IINE, and Kobo remotes;
+- falls back to an unknown-name device only when exactly one connectable HID
+  candidate is seen;
+- fails safe when multiple generic HID candidates are nearby;
+- saves the new bonded address/name/type only after HID service discovery and
+  report subscription succeed;
+- arms the same bonded auto-reconnect path after successful pairing.
+
 ## Hardware Validation
 
 Validated on 2026-05-09 with:
@@ -114,13 +136,15 @@ Validation gates:
 | Guard source audit and no guarded reconnect crash during validation | Passed |
 
 See `docs/x3-ble-idlefix15-hardware-validation.md` for the full checklist.
+Pairfix1 adds a software-validated first-pairing fix on top of that reconnect
+baseline; see `docs/x3-ble-pairfix1-validation.md`.
 
 ## Known Limits
 
 - This has been hardware-tested on one X3 plus one Free3/Free3-ER-style remote.
-- The `Scan for devices` entry is intentionally disabled on the X3 candidate
-  because earlier testing made manual scanning a crash path. The intended flow
-  is to use one successful bonded setup/reconnect, then automatic reconnect.
+- The old `Scan for devices` list is still not the daily-driver path. Use
+  `Pair New Remote` for first setup and `Reconnect Remote` for an already saved
+  remote.
 - Other BLE remotes may work through common HID profiles or the learn wizard,
   but they are not validated to the same level.
 - This is a community fork, not an official CrossPoint Reader release and not
@@ -134,11 +158,13 @@ See `docs/x3-ble-idlefix15-hardware-validation.md` for the full checklist.
   mapping persistence.
 - `lib/hal/BluetoothDiagnostics.*`: persisted boot/reconnect diagnostic ring.
 - `src/activities/settings/BluetoothSettingsActivity.*`: Bluetooth settings,
-  reconnect action, setup wizard, debug monitor.
+  pair-new action, reconnect action, setup wizard, debug monitor.
 - `src/main.cpp`: BLE restore, sleep/wake arming, reconnect polling, diagnostic
   serial command.
-- `scripts/verify_x3_ble_idlefix15.py`: local source/artifact consistency
+- `scripts/verify_x3_ble_pairfix1.py`: local source/artifact consistency
   checks.
+- `scripts/audit_x3_ble_pairing_flow.py`: first-pairing and reconnect
+  invariant guard.
 - `scripts/audit_x3_ble_goal_completion.py`: strict final validation audit.
 - `scripts/read_x3_ble_diag.py`: mounted-storage BLE diagnostic summarizer.
 
@@ -161,9 +187,9 @@ The firmware image is written to:
 To run the local validation checks against a packaged binary:
 
 ```sh
-cp .pio/build/gh_release/firmware.bin ~/Downloads/crosspoint-x3-ble-idlefix15.bin
-python3 scripts/verify_x3_ble_idlefix15.py
-python3 scripts/preflight_x3_ble_idlefix15.py --local-only
+cp .pio/build/gh_release/firmware.bin ~/Downloads/crosspoint-x3-ble-pairfix1.bin
+python3 scripts/verify_x3_ble_pairfix1.py
+python3 scripts/preflight_x3_ble_pairfix1.py --local-only
 ```
 
 ## Flashing
@@ -171,8 +197,8 @@ python3 scripts/preflight_x3_ble_idlefix15.py --local-only
 The final flash helper writes and verifies both OTA app slots:
 
 ```sh
-X3_BLE_FIRMWARE_BIN=~/Downloads/crosspoint-x3-ble-idlefix15.bin \
-  scripts/flash_record_x3_ble_idlefix15.sh
+X3_BLE_FIRMWARE_BIN=~/Downloads/crosspoint-x3-ble-pairfix1.bin \
+  scripts/flash_record_x3_ble_pairfix1.sh
 ```
 
 If the X3 flash port is not visible on macOS:

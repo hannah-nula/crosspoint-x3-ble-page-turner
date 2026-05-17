@@ -49,6 +49,7 @@ class BluetoothSettingsActivity : public Activity {
   bool exitOnSuccessfulConnect = false;
   bool reconnectScanPending = false;
   bool reconnectJobPending = false;
+  bool pairJobPending = false;
 
  public:
   explicit BluetoothSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
@@ -68,7 +69,7 @@ class BluetoothSettingsActivity : public Activity {
   void handleDeviceListInput();
   void handleLearnInput();
   void handleDebugInput();
-  bool pollReconnectJob();
+  bool pollBleJob();
   void startBondedReconnectScan();
   bool finishBondedReconnectScan();
   bool matchesBondedDevice(const BluetoothDevice& device) const;

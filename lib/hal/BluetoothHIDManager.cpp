@@ -304,7 +304,23 @@ static bool isFree2Profile(const DeviceProfiles::DeviceProfile* profile) {
 
 static bool isFreePageTurnerName(const std::string& name) {
   return containsCaseInsensitive(name, "free2") ||
-         containsCaseInsensitive(name, "free3");
+         containsCaseInsensitive(name, "free 2") ||
+         containsCaseInsensitive(name, "free-2") ||
+         containsCaseInsensitive(name, "free3") ||
+         containsCaseInsensitive(name, "free 3") ||
+         containsCaseInsensitive(name, "free-3");
+}
+
+static bool isKnownPairableRemoteName(const std::string& name) {
+  if (isUnknownOrEmptyName(name)) {
+    return false;
+  }
+
+  return isFreePageTurnerName(name) ||
+         (containsCaseInsensitive(name, "game") && containsCaseInsensitive(name, "brick")) ||
+         containsCaseInsensitive(name, "iine") ||
+         (containsCaseInsensitive(name, "mini") && containsCaseInsensitive(name, "keyboard")) ||
+         containsCaseInsensitive(name, "kobo");
 }
 
 static bool isFreePageTurnerDevice(const ConnectedDevice& device) {
@@ -943,9 +959,14 @@ void BluetoothHIDManager::onScanResult(NimBLEAdvertisedDevice* advertisedDevice)
       if (!name.empty() && dev.name == "Unknown") dev.name = name;
       if (isHID) dev.isHID = true;
       if (connectable) dev.connectable = true;
-      if (_reconnectJobRunning && dev.connectable &&
-          matchesBondedReconnectCandidate(dev, _bondedDeviceAddress, _bondedDeviceName)) {
-        _reconnectScanMatched = true;
+      if (_reconnectJobRunning && dev.connectable) {
+        if (_reconnectJobPairNew) {
+          if (isHighConfidencePairingCandidate(dev)) {
+            _reconnectScanMatched = true;
+          }
+        } else if (matchesBondedReconnectCandidate(dev, _bondedDeviceAddress, _bondedDeviceName)) {
+          _reconnectScanMatched = true;
+        }
       }
       loggedDevice = dev;
       xSemaphoreGive(_scanResultsMutex);
@@ -964,9 +985,14 @@ void BluetoothHIDManager::onScanResult(NimBLEAdvertisedDevice* advertisedDevice)
   
   _discoveredDevices.push_back(device);
 
-  if (_reconnectJobRunning && device.connectable &&
-      matchesBondedReconnectCandidate(device, _bondedDeviceAddress, _bondedDeviceName)) {
-    _reconnectScanMatched = true;
+  if (_reconnectJobRunning && device.connectable) {
+    if (_reconnectJobPairNew) {
+      if (isHighConfidencePairingCandidate(device)) {
+        _reconnectScanMatched = true;
+      }
+    } else if (matchesBondedReconnectCandidate(device, _bondedDeviceAddress, _bondedDeviceName)) {
+      _reconnectScanMatched = true;
+    }
   }
 
   loggedDevice = device;
@@ -980,7 +1006,8 @@ void BluetoothHIDManager::onScanResult(NimBLEAdvertisedDevice* advertisedDevice)
   }
 }
 
-bool BluetoothHIDManager::connectToDevice(const std::string& address, uint32_t timeoutMs, uint8_t addressType) {
+bool BluetoothHIDManager::connectToDevice(const std::string& address, uint32_t timeoutMs, uint8_t addressType,
+                                          const std::string& nameHint) {
   if (!_enabled) {
     LOG_ERR("BT", "Cannot connect: Bluetooth not enabled");
     BluetoothDiagnostics::recordf("connect_skip", "addr=%s reason=disabled", address.c_str());
@@ -1013,7 +1040,8 @@ bool BluetoothHIDManager::connectToDevice(const std::string& address, uint32_t t
       }
     }
   }
-  resolvedAddressType = normalizeAddressType(resolvedAddressType, address, _bondedDeviceName);
+  const std::string connectionNameHint = !nameHint.empty() ? nameHint : _bondedDeviceName;
+  resolvedAddressType = normalizeAddressType(resolvedAddressType, address, connectionNameHint);
 
   LOG_INF("BT", "Connecting to device %s (type=%u timeout=%lu ms)", address.c_str(),
           static_cast<unsigned>(resolvedAddressType), static_cast<unsigned long>(timeoutMs));
@@ -1023,7 +1051,7 @@ bool BluetoothHIDManager::connectToDevice(const std::string& address, uint32_t t
   BluetoothDiagnostics::flushToStorage();
   
     const auto addressTypeAttempts =
-        connectionAddressTypeCandidates(resolvedAddressType, address, _bondedDeviceName);
+        connectionAddressTypeCandidates(resolvedAddressType, address, connectionNameHint);
     const uint32_t attemptTimeoutMs = perAttemptConnectTimeout(timeoutMs, addressTypeAttempts.size());
     NimBLEClient* pClient = nullptr;
     int lastConnectError = 0;
@@ -1230,7 +1258,10 @@ bool BluetoothHIDManager::connectToDevice(const std::string& address, uint32_t t
     
     if (!foundInScan) {
       LOG_INF("BT", "Device not in scan results (may be previously paired): %s", address.c_str());
-      if (connDev.name.empty() && !_bondedDeviceAddress.empty() && _bondedDeviceAddress == address &&
+      if (!nameHint.empty() && nameHint != "Unknown") {
+        connDev.name = nameHint;
+        LOG_INF("BT", "Using pairing name hint: %s", connDev.name.c_str());
+      } else if (connDev.name.empty() && !_bondedDeviceAddress.empty() && _bondedDeviceAddress == address &&
           !_bondedDeviceName.empty()) {
         connDev.name = _bondedDeviceName;
         LOG_INF("BT", "Using bonded device name hint: %s", connDev.name.c_str());
@@ -1432,6 +1463,77 @@ std::vector<std::string> BluetoothHIDManager::getConnectedDevices() const {
   return addresses;
 }
 
+bool BluetoothHIDManager::startPairNewRemote(uint32_t timeoutMs) {
+  ensureReconnectMutex();
+
+  if (!_reconnectMutex || xSemaphoreTake(_reconnectMutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+    lastError = "Bluetooth busy";
+    return false;
+  }
+
+  if (_reconnectJobRunning) {
+    _reconnectJobMessage = _reconnectJobPairNew ? "Pairing already running" : "Reconnect already running";
+    lastError = _reconnectJobMessage;
+    xSemaphoreGive(_reconnectMutex);
+    return false;
+  }
+
+  _reconnectJobFinished = false;
+  _reconnectJobSuccess = false;
+  _reconnectJobPairNew = false;
+
+  if (!_enabled) {
+    _reconnectJobMessage = "Enable BT first";
+    _reconnectJobFinished = true;
+    lastError = _reconnectJobMessage;
+    xSemaphoreGive(_reconnectMutex);
+    return false;
+  }
+
+  if (_scanning) {
+    _reconnectJobMessage = "Scan already running";
+    _reconnectJobFinished = true;
+    lastError = _reconnectJobMessage;
+    xSemaphoreGive(_reconnectMutex);
+    return false;
+  }
+
+  _reconnectJobRunning = true;
+  _reconnectJobTimeoutMs = timeoutMs == 0 ? BLE_MANUAL_RECONNECT_TIMEOUT_MS : timeoutMs;
+  _reconnectJobScanMs = BLE_MANUAL_RECONNECT_SCAN_MS;
+  _reconnectJobAutomatic = false;
+  _reconnectJobPairNew = true;
+  _reconnectJobMessage = "Pairing...";
+
+  TaskHandle_t handle = nullptr;
+  const BaseType_t created =
+      xTaskCreate(&BluetoothHIDManager::bondedReconnectTaskEntry, "bt_pair", 12288, this, 1, &handle);
+  if (created != pdPASS) {
+    _reconnectJobRunning = false;
+    _reconnectJobFinished = true;
+    _reconnectJobSuccess = false;
+    _reconnectJobAutomatic = false;
+    _reconnectJobPairNew = false;
+    _reconnectJobScanMs = 0;
+    _reconnectJobMessage = "Pair task failed";
+    lastError = _reconnectJobMessage;
+    BluetoothDiagnostics::record("pair_new_task_failed");
+    BluetoothDiagnostics::flushToStorage();
+    xSemaphoreGive(_reconnectMutex);
+    return false;
+  }
+
+  _reconnectTaskHandle = handle;
+  lastError = _reconnectJobMessage;
+  BluetoothDiagnostics::recordf("pair_new_queued", "oldAddr=%s oldName=%s timeoutMs=%lu scanMs=%lu",
+                                _bondedDeviceAddress.c_str(), _bondedDeviceName.c_str(),
+                                static_cast<unsigned long>(_reconnectJobTimeoutMs),
+                                static_cast<unsigned long>(_reconnectJobScanMs));
+  BluetoothDiagnostics::flushToStorage();
+  xSemaphoreGive(_reconnectMutex);
+  return true;
+}
+
 bool BluetoothHIDManager::startBondedReconnect(uint32_t timeoutMs, bool automatic) {
   ensureReconnectMutex();
 
@@ -1449,6 +1551,7 @@ bool BluetoothHIDManager::startBondedReconnect(uint32_t timeoutMs, bool automati
 
   _reconnectJobFinished = false;
   _reconnectJobSuccess = false;
+  _reconnectJobPairNew = false;
 
   if (!_enabled) {
     _reconnectJobMessage = "Enable BT first";
@@ -1500,6 +1603,7 @@ bool BluetoothHIDManager::startBondedReconnect(uint32_t timeoutMs, bool automati
     _reconnectJobFinished = true;
     _reconnectJobSuccess = false;
     _reconnectJobAutomatic = false;
+    _reconnectJobPairNew = false;
     _reconnectJobScanMs = 0;
     _reconnectJobMessage = "Reconnect task failed";
     lastError = _reconnectJobMessage;
@@ -1584,12 +1688,14 @@ void BluetoothHIDManager::runBondedReconnectTask() {
   const uint32_t timeoutMs = _reconnectJobTimeoutMs == 0 ? BLE_RECONNECT_USER_INTERVAL_MS : _reconnectJobTimeoutMs;
   const uint32_t scanMs = _reconnectJobScanMs == 0 ? BLE_RECONNECT_SCAN_MS : _reconnectJobScanMs;
   const bool automatic = _reconnectJobAutomatic;
+  const bool pairNew = _reconnectJobPairNew;
 
   if (automatic) {
     setAutoReconnectGuard(true);
   }
 
-  BluetoothDiagnostics::recordf(automatic ? "auto_reconnect_start" : "manual_reconnect_start",
+  const char* startEvent = pairNew ? "pair_new_start" : (automatic ? "auto_reconnect_start" : "manual_reconnect_start");
+  BluetoothDiagnostics::recordf(startEvent,
                                 "addr=%s name=%s type=%u timeoutMs=%lu scanMs=%lu",
                                 address.c_str(), name.c_str(), static_cast<unsigned>(addressType),
                                 static_cast<unsigned long>(timeoutMs), static_cast<unsigned long>(scanMs));
@@ -1601,34 +1707,47 @@ void BluetoothHIDManager::runBondedReconnectTask() {
 
   if (!_enabled) {
     message = "Bluetooth disabled";
-  } else if (address.empty()) {
+  } else if (!pairNew && address.empty()) {
     message = "No bonded remote";
   } else {
     BluetoothDevice candidate;
-    if (scanForBondedReconnectCandidate(candidate, scanMs)) {
-      BluetoothDiagnostics::recordf("manual_reconnect_candidate", "addr=%s name=%s type=%u",
+    const bool foundCandidate =
+        pairNew ? scanForPairingCandidate(candidate, scanMs) : scanForBondedReconnectCandidate(candidate, scanMs);
+    if (foundCandidate) {
+      BluetoothDiagnostics::recordf(pairNew ? "pair_new_candidate" : "manual_reconnect_candidate",
+                                    "addr=%s name=%s type=%u",
                                     candidate.address.c_str(), candidate.name.c_str(),
                                     static_cast<unsigned>(candidate.addressType));
       BluetoothDiagnostics::flushToStorage();
-      success = connectToDevice(candidate.address, timeoutMs, candidate.addressType);
+      success = connectToDevice(candidate.address, timeoutMs, candidate.addressType, candidate.name);
       if (success) {
         _bondedDeviceAddress = candidate.address;
-        if (!candidate.name.empty() && candidate.name != "Unknown") {
+        if (pairNew) {
+          _bondedDeviceName = candidate.name.empty() ? "Unknown" : candidate.name;
+        } else if (!candidate.name.empty() && candidate.name != "Unknown") {
           _bondedDeviceName = candidate.name;
         }
         _bondedDeviceAddressType = candidate.addressType;
-        armAutoReconnect(automatic ? "auto_reconnect_success" : "manual_reconnect_success", !automatic);
+        armAutoReconnect(pairNew ? "pair_new_success" : (automatic ? "auto_reconnect_success" : "manual_reconnect_success"),
+                         !automatic);
       }
     } else {
-      BluetoothDiagnostics::recordf("manual_reconnect_no_candidate", "savedAddr=%s", address.c_str());
+      BluetoothDiagnostics::recordf(pairNew ? "pair_new_no_candidate" : "manual_reconnect_no_candidate",
+                                    "savedAddr=%s", address.c_str());
       BluetoothDiagnostics::flushToStorage();
-      lastError = "Remote not found; wake it";
+      if (lastError.empty()) {
+        lastError = pairNew ? "No pairable remote found" : "Remote not found; wake it";
+      }
     }
 
     if (success) {
-      message = _bondedDeviceName.empty() ? "Reconnected" : ("Reconnected to " + _bondedDeviceName);
+      if (pairNew) {
+        message = _bondedDeviceName.empty() ? "Paired remote" : ("Paired " + _bondedDeviceName);
+      } else {
+        message = _bondedDeviceName.empty() ? "Reconnected" : ("Reconnected to " + _bondedDeviceName);
+      }
     } else {
-      message = lastError.empty() ? "Reconnect failed" : lastError;
+      message = lastError.empty() ? (pairNew ? "Pairing failed" : "Reconnect failed") : lastError;
     }
   }
 
@@ -1652,6 +1771,7 @@ void BluetoothHIDManager::runBondedReconnectTask() {
     _reconnectJobFinished = true;
     _reconnectJobRunning = false;
     _reconnectJobAutomatic = false;
+    _reconnectJobPairNew = false;
     _reconnectJobScanMs = 0;
     _reconnectJobMessage = message;
     _reconnectTaskHandle = nullptr;
@@ -1676,6 +1796,7 @@ void BluetoothHIDManager::runBondedReconnectTask() {
     _reconnectJobFinished = true;
     _reconnectJobSuccess = success;
     _reconnectJobAutomatic = false;
+    _reconnectJobPairNew = false;
     _reconnectJobScanMs = 0;
     _reconnectJobMessage = message;
     _reconnectTaskHandle = nullptr;
@@ -1686,7 +1807,8 @@ void BluetoothHIDManager::runBondedReconnectTask() {
   if (automatic) {
     setAutoReconnectGuard(false);
   }
-  BluetoothDiagnostics::recordf(automatic ? "auto_reconnect_done" : "manual_reconnect_done",
+  const char* doneEvent = pairNew ? "pair_new_done" : (automatic ? "auto_reconnect_done" : "manual_reconnect_done");
+  BluetoothDiagnostics::recordf(doneEvent,
                                 "success=%d msg=%s", success, message.c_str());
   BluetoothDiagnostics::flushToStorage(true);
 }
@@ -1809,6 +1931,120 @@ bool BluetoothHIDManager::scanForBondedReconnectCandidate(BluetoothDevice& candi
   return false;
 }
 
+bool BluetoothHIDManager::scanForPairingCandidate(BluetoothDevice& candidate, uint32_t scanMs) {
+  if (!_enabled) {
+    lastError = "Bluetooth not enabled";
+    return false;
+  }
+
+  if (_scanning) {
+    LOG_INF("BT", "Pairing scan skipped: scan already active");
+    BluetoothDiagnostics::record("pair_new_scan_busy");
+    BluetoothDiagnostics::flushToStorage();
+    return false;
+  }
+
+  if (scanMs == 0) {
+    scanMs = BLE_MANUAL_RECONNECT_SCAN_MS;
+  }
+
+  NimBLEScan* pScan = NimBLEDevice::getScan();
+  if (!pScan) {
+    lastError = "Scan failed";
+    BluetoothDiagnostics::record("pair_new_scan_no_object");
+    BluetoothDiagnostics::flushToStorage();
+    return false;
+  }
+
+  LOG_INF("BT", "Starting worker pairing scan for %lu ms", static_cast<unsigned long>(scanMs));
+  BluetoothDiagnostics::recordf("pair_new_scan_start", "durationMs=%lu oldAddr=%s oldName=%s",
+                                static_cast<unsigned long>(scanMs),
+                                _bondedDeviceAddress.c_str(), _bondedDeviceName.c_str());
+  BluetoothDiagnostics::flushToStorage();
+
+  clearDiscoveredDevices();
+  _reconnectScanMatched = false;
+  _scanning = true;
+  _scanStopTime = millis() + scanMs + 1000;
+
+  // Use the stable reconnect worker scan shape for first pairing too: active,
+  // finite, duplicate callbacks enabled, and a bounded scan-response wait.
+  pScan->setScanCallbacks(&scanCallbacks, true);
+  pScan->setActiveScan(true);
+  pScan->setDuplicateFilter(false);
+  pScan->setScanResponseTimeout(BLE_MANUAL_SCAN_RESPONSE_TIMEOUT_MS);
+  pScan->setMaxResults(16);
+  pScan->setInterval(BLE_RECONNECT_SCAN_INTERVAL);
+  pScan->setWindow(BLE_RECONNECT_SCAN_WINDOW);
+
+  const bool started = pScan->start(scanMs, false);
+  if (!started) {
+    _scanStopTime = 0;
+    _scanning = false;
+    lastError = "Scan failed";
+    BluetoothDiagnostics::record("pair_new_scan_start_failed");
+    BluetoothDiagnostics::flushToStorage();
+    return false;
+  }
+
+  const unsigned long deadline = millis() + scanMs + 1200;
+  while (static_cast<int32_t>(millis() - deadline) < 0) {
+    if (_reconnectScanMatched) {
+      const size_t found = discoveredDeviceCount();
+      BluetoothDiagnostics::recordf("pair_new_scan_early_match", "found=%u",
+                                    static_cast<unsigned>(found));
+      BluetoothDiagnostics::flushToStorage();
+      break;
+    }
+    if (!pScan->isScanning()) {
+      break;
+    }
+    vTaskDelay(pdMS_TO_TICKS(20));
+  }
+
+  if (pScan->isScanning()) {
+    pScan->stop();
+  }
+
+  _scanStopTime = 0;
+  _scanning = false;
+
+  vTaskDelay(pdMS_TO_TICKS(20));
+
+  if (findPairingCandidate(candidate)) {
+    const size_t found = discoveredDeviceCount();
+    LOG_INF("BT", "Pairing scan selected %s (%s type=%u)", candidate.name.c_str(), candidate.address.c_str(),
+            static_cast<unsigned>(candidate.addressType));
+    BluetoothDiagnostics::recordf("pair_new_scan_match", "addr=%s name=%s type=%u found=%u hid=%d conn=%d",
+                                  candidate.address.c_str(), candidate.name.c_str(),
+                                  static_cast<unsigned>(candidate.addressType),
+                                  static_cast<unsigned>(found), candidate.isHID,
+                                  candidate.connectable);
+    BluetoothDiagnostics::flushToStorage();
+    return true;
+  }
+
+  const size_t found = discoveredDeviceCount();
+  LOG_INF("BT", "Pairing scan found %u devices, no safe candidate", static_cast<unsigned>(found));
+  BluetoothDiagnostics::recordf("pair_new_scan_no_match", "found=%u", static_cast<unsigned>(found));
+  uint8_t logged = 0;
+  for (const auto& device : getDiscoveredDevices()) {
+    if (logged >= BLE_RECONNECT_SEEN_LOG_LIMIT) {
+      break;
+    }
+    BluetoothDiagnostics::recordf("pair_new_seen", "addr=%s name=%s type=%u hid=%d conn=%d rssi=%d",
+                                  device.address.c_str(), device.name.c_str(),
+                                  static_cast<unsigned>(device.addressType), device.isHID,
+                                  device.connectable, device.rssi);
+    logged++;
+  }
+  BluetoothDiagnostics::flushToStorage();
+  if (lastError.empty()) {
+    lastError = "No pairable remote found";
+  }
+  return false;
+}
+
 bool BluetoothHIDManager::findBondedReconnectCandidate(BluetoothDevice& candidate) const {
   const auto discoveredDevices = getDiscoveredDevices();
   for (const auto& device : discoveredDevices) {
@@ -1879,6 +2115,73 @@ bool BluetoothHIDManager::findBondedReconnectCandidate(BluetoothDevice& candidat
   return false;
 }
 
+bool BluetoothHIDManager::findPairingCandidate(BluetoothDevice& candidate) {
+  const auto discoveredDevices = getDiscoveredDevices();
+  const BluetoothDevice* knownCandidate = nullptr;
+  int knownCandidateRssi = -1000;
+  uint8_t knownCandidateCount = 0;
+  const BluetoothDevice* singleHidCandidate = nullptr;
+  uint8_t hidCandidateCount = 0;
+  uint8_t connectableCandidateCount = 0;
+
+  for (const auto& device : discoveredDevices) {
+    if (!device.connectable) {
+      continue;
+    }
+
+    if (!_bondedDeviceAddress.empty() && device.address == _bondedDeviceAddress) {
+      continue;
+    }
+
+    connectableCandidateCount++;
+
+    if (isKnownPairableRemoteName(device.name)) {
+      knownCandidateCount++;
+      if (!knownCandidate || device.rssi > knownCandidateRssi) {
+        knownCandidate = &device;
+        knownCandidateRssi = device.rssi;
+      }
+    }
+
+    if (device.isHID) {
+      singleHidCandidate = &device;
+      hidCandidateCount++;
+    }
+  }
+
+  if (knownCandidate) {
+    if (knownCandidateCount > 1) {
+      BluetoothDiagnostics::recordf("pair_new_multiple_known", "count=%u selected=%s rssi=%d",
+                                    static_cast<unsigned>(knownCandidateCount),
+                                    knownCandidate->name.c_str(), knownCandidate->rssi);
+    }
+    candidate = *knownCandidate;
+    return true;
+  }
+
+  if (hidCandidateCount == 1 && singleHidCandidate) {
+    BluetoothDiagnostics::recordf("pair_new_fallback_single_hid", "addr=%s name=%s rssi=%d",
+                                  singleHidCandidate->address.c_str(), singleHidCandidate->name.c_str(),
+                                  singleHidCandidate->rssi);
+    candidate = *singleHidCandidate;
+    return true;
+  }
+
+  if (hidCandidateCount > 1) {
+    lastError = "Multiple HID remotes found; retry closer";
+  } else if (connectableCandidateCount == 0) {
+    lastError = "No remote found; wake pairing mode";
+  } else {
+    lastError = "No pairable remote found";
+  }
+
+  BluetoothDiagnostics::recordf("pair_new_fallback_skip", "known=%u hid=%u connectable=%u",
+                                static_cast<unsigned>(knownCandidateCount),
+                                static_cast<unsigned>(hidCandidateCount),
+                                static_cast<unsigned>(connectableCandidateCount));
+  return false;
+}
+
 bool BluetoothHIDManager::matchesBondedReconnectCandidate(const BluetoothDevice& device, const std::string& address,
                                                           const std::string& name) const {
   if (!address.empty() && device.address == address) {
@@ -1893,12 +2196,23 @@ bool BluetoothHIDManager::matchesBondedReconnectCandidate(const BluetoothDevice&
     return true;
   }
 
-  if ((containsCaseInsensitive(name, "free3") && containsCaseInsensitive(device.name, "free3")) ||
-      (containsCaseInsensitive(name, "free2") && containsCaseInsensitive(device.name, "free2"))) {
+  if (isFreePageTurnerName(name) && isFreePageTurnerName(device.name)) {
     return true;
   }
 
   return false;
+}
+
+bool BluetoothHIDManager::isHighConfidencePairingCandidate(const BluetoothDevice& device) const {
+  if (!device.connectable) {
+    return false;
+  }
+
+  if (!_bondedDeviceAddress.empty() && device.address == _bondedDeviceAddress) {
+    return false;
+  }
+
+  return isKnownPairableRemoteName(device.name);
 }
 
 ConnectedDevice* BluetoothHIDManager::findConnectedDeviceLocked(const std::string& address) {

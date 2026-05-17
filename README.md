@@ -25,7 +25,7 @@ repository at this exact commit:
 - Commit date: 2026-05-04
 - Commit title: `docs: expand first use of OPDS acronym and provide a wikipedia link (#1824)`
 
-The firmware in this fork is versioned as `1.2.0-x3-ble-idlefix15`: it starts
+The firmware in this fork is versioned as `1.2.0-x3-ble-pairfix1`: it starts
 from that upstream CrossPoint `1.2.0` line, then adds the X3 BLE page-turner
 work documented below. It is not based on the separate unofficial
 CrossPoint-BLE fork, and it is not an official upstream CrossPoint release.
@@ -33,11 +33,13 @@ CrossPoint-BLE fork, and it is not an official upstream CrossPoint release.
 ## What Is Different In This Fork?
 
 Starting from the upstream base above, this fork adds the validated
-`1.2.0-x3-ble-idlefix15` X3 BLE page-turner work.
+`1.2.0-x3-ble-idlefix15` reconnect baseline plus the
+`1.2.0-x3-ble-pairfix1` first-pairing fix.
 
 Highlights:
 
 - Bluetooth settings screen under Settings and from the reader menu.
+- `Pair New Remote` flow for first-time Free2/Free3-style setup.
 - NimBLE-based HID page-turner support with Free2/Free3-style profiles.
 - Bonded `Reconnect Remote` flow for the X3.
 - Automatic reconnect after reader sleep/wake.
@@ -55,17 +57,19 @@ validation, and limitations.
 
 ## Current X3 BLE Release
 
-- Version: `1.2.0-x3-ble-idlefix15`
+- Version: `1.2.0-x3-ble-pairfix1`
 - Firmware SHA-256:
-  `5b23aee2453df26f35fc837ea580eedc3b7c8fa7deeb0f01092e9b7ff7b2949f`
-- Binary size: `0x5b62e0`
+  `1211423cfc4d96273a6528893effc584f9a33ac213a8ab56daf261d434f8eacd`
+- Binary size: `0x5b7630`, below the `0x640000` X3 OTA app partition limit
 - Validated hardware: XTEink X3 plus Free3/Free3-ER-style BLE page turner
-- Validation status: flash, boot, manual reconnect, page input, reader
-  sleep/wake, remote sleep/off/on, long idle recovery, repeated cycles, and
-  reconnect guard behavior all passed
+- Validation status: idlefix15 hardware validation passed flash, boot, manual
+  reconnect, page input, reader sleep/wake, remote sleep/off/on, long idle
+  recovery, repeated cycles, and reconnect guard behavior. Pairfix1 preserves
+  that reconnect path and restores first-time pairing through a bounded worker
+  scan; see [docs/x3-ble-pairfix1-validation.md](./docs/x3-ble-pairfix1-validation.md).
 
 The firmware binary is intended to be published as a GitHub release asset named
-`crosspoint-x3-ble-idlefix15.bin`.
+`crosspoint-x3-ble-pairfix1.bin`.
 
 ## Motivation
 
@@ -114,15 +118,15 @@ For more details about the scope of the project, see the [SCOPE.md](SCOPE.md) do
 
 ### X3 BLE fork release
 
-1. Download `crosspoint-x3-ble-idlefix15.bin` from this repository's
+1. Download `crosspoint-x3-ble-pairfix1.bin` from this repository's
    [releases page](https://github.com/hannah-nula/crosspoint-x3-ble-page-turner/releases).
 2. Connect the XTEink X3 over USB and put it into the ESP32-C3 flash/download
    mode if needed.
 3. Flash both OTA app slots using the helper:
 
 ```sh
-X3_BLE_FIRMWARE_BIN=~/Downloads/crosspoint-x3-ble-idlefix15.bin \
-  scripts/flash_record_x3_ble_idlefix15.sh
+X3_BLE_FIRMWARE_BIN=~/Downloads/crosspoint-x3-ble-pairfix1.bin \
+  scripts/flash_record_x3_ble_pairfix1.sh
 ```
 
 The helper verifies both app slots after writing. If macOS cannot see the X3
@@ -132,10 +136,10 @@ flash port, run:
 python3 scripts/diagnose_x3_usb_visibility.py
 ```
 
-After flashing, enable Bluetooth from Settings, connect/reconnect the remote,
-and use the reader normally. The intended daily-driver path is bonded reconnect
-and automatic reconnect; `Scan for devices` is intentionally disabled in this
-X3 candidate because it was unstable during testing.
+After flashing, enable Bluetooth from Settings, choose `Pair New Remote` for a
+new Free2/Free3-style remote, or use `Reconnect Remote` for an already saved
+remote. The intended daily-driver path remains bonded reconnect and automatic
+reconnect.
 
 ### Web (latest firmware)
 

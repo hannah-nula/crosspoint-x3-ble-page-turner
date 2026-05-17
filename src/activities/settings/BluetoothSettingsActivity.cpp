@@ -39,6 +39,15 @@ bool containsCaseInsensitive(const std::string& haystack, const char* needle) {
   return false;
 }
 
+bool isFreePageTurnerName(const std::string& name) {
+  return containsCaseInsensitive(name, "free2") ||
+         containsCaseInsensitive(name, "free 2") ||
+         containsCaseInsensitive(name, "free-2") ||
+         containsCaseInsensitive(name, "free3") ||
+         containsCaseInsensitive(name, "free 3") ||
+         containsCaseInsensitive(name, "free-3");
+}
+
 bool equalsCaseInsensitive(const std::string& a, const char* b) {
   if (!b) {
     return false;
@@ -74,6 +83,7 @@ void BluetoothSettingsActivity::onEnter() {
   debugUniqueCount = 0;
   reconnectScanPending = false;
   reconnectJobPending = false;
+  pairJobPending = false;
   memset(debugUniqueKeys, 0, sizeof(debugUniqueKeys));
   memset(debugUniqueCounts, 0, sizeof(debugUniqueCounts));
   learnStep = LearnStep::WAIT_PREV;
@@ -82,6 +92,7 @@ void BluetoothSettingsActivity::onEnter() {
   btMgr = &BluetoothHIDManager::getInstance();
   btMgr->setBondedDevice(SETTINGS.bleBondedDeviceAddr, SETTINGS.bleBondedDeviceName, SETTINGS.bleBondedDeviceAddrType);
   reconnectJobPending = btMgr->isBondedReconnectInProgress();
+  pairJobPending = btMgr->isPairingInProgress();
   LOG_INF("BT", "BluetoothHIDManager ready");
   
   // Restore Bluetooth persistent state on entry
@@ -111,13 +122,13 @@ void BluetoothSettingsActivity::onExit() {
 }
 
 void BluetoothSettingsActivity::loop() {
-  if (pollReconnectJob()) {
+  if (pollBleJob()) {
     return;
   }
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
     if (btMgr && btMgr->isBondedReconnectInProgress()) {
-      lastError = "Reconnect in progress";
+      lastError = btMgr->isPairingInProgress() ? "Pairing in progress" : "Reconnect in progress";
       requestUpdate();
       return;
     }
@@ -207,7 +218,7 @@ void BluetoothSettingsActivity::handleMainMenuInput() {
   constexpr int kToggleBluetoothIndex = 0;
   constexpr int kReconnectBondedIndex = 1;
   constexpr int kDisconnectDevicesIndex = 2;
-  constexpr int kScanForDevicesIndex = 3;
+  constexpr int kPairNewRemoteIndex = 3;
   constexpr int kRemoteSetupWizardIndex = 4;
 #ifdef ENABLE_BT_DEBUG_MONITOR
   constexpr int kDebugMonitorIndex = 5;
@@ -299,8 +310,37 @@ void BluetoothSettingsActivity::handleMainMenuInput() {
         }
       }
       requestUpdate();
-    } else if (selectedIndex == kScanForDevicesIndex) {
-      lastError = "Scan disabled: unstable on X3";
+    } else if (selectedIndex == kPairNewRemoteIndex) {
+      if (btMgr->isBondedReconnectInProgress()) {
+        lastError = btMgr->isPairingInProgress() ? "Pairing in progress" : "Reconnect in progress";
+        requestUpdate();
+        return;
+      }
+      if (!btMgr->isEnabled()) {
+        lastError = "Enable BT first";
+      } else {
+        const auto connectedDevices = btMgr->getConnectedDevices();
+        bool disconnected = true;
+        for (const auto& addr : connectedDevices) {
+          disconnected = btMgr->disconnectFromDevice(addr) && disconnected;
+        }
+
+        if (!disconnected) {
+          lastError = "Disconnect failed; retry";
+        } else if (btMgr->startPairNewRemote(12000)) {
+          pairJobPending = true;
+          reconnectJobPending = false;
+          lastError = "Pairing... wake remote";
+        } else {
+          bool success = false;
+          std::string message;
+          if (btMgr->consumeReconnectResult(success, message)) {
+            lastError = message.empty() ? (success ? "Paired remote" : "Pairing failed") : message;
+          } else {
+            lastError = btMgr->lastError.empty() ? "Pairing failed" : btMgr->lastError;
+          }
+        }
+      }
       requestUpdate();
     } else if (selectedIndex == kRemoteSetupWizardIndex) {
       if (!btMgr->isEnabled()) {
@@ -374,6 +414,19 @@ void BluetoothSettingsActivity::handleMainMenuInput() {
       lastError = "Learned mapping cleared";
       requestUpdate();
     } else if (selectedIndex == kForgetBondedRemoteIndex) {
+      if (btMgr->isBondedReconnectInProgress()) {
+        lastError = btMgr->isPairingInProgress() ? "Pairing in progress" : "Reconnect in progress";
+        requestUpdate();
+        return;
+      }
+      const std::string oldBondedAddr = SETTINGS.bleBondedDeviceAddr;
+      const auto connectedDevices = btMgr->getConnectedDevices();
+      for (const auto& addr : connectedDevices) {
+        btMgr->disconnectFromDevice(addr);
+      }
+      if (!oldBondedAddr.empty()) {
+        DeviceProfiles::clearCustomProfileForDevice(oldBondedAddr);
+      }
       SETTINGS.bleBondedDeviceAddr[0] = '\0';
       SETTINGS.bleBondedDeviceName[0] = '\0';
       SETTINGS.bleBondedDeviceAddrType = 0;
@@ -385,15 +438,19 @@ void BluetoothSettingsActivity::handleMainMenuInput() {
   }
 }
 
-bool BluetoothSettingsActivity::pollReconnectJob() {
-  if (!btMgr || !reconnectJobPending) {
+bool BluetoothSettingsActivity::pollBleJob() {
+  if (!btMgr || (!reconnectJobPending && !pairJobPending)) {
     return false;
   }
 
+  const bool pairing = pairJobPending || btMgr->isPairingInProgress();
+  const char* runningMessage = pairing ? "Pairing..." : "Reconnecting...";
+
   const auto status = btMgr->getReconnectStatus();
   if (status.state == BluetoothReconnectStatus::State::Running) {
-    if (lastError != "Reconnecting...") {
-      lastError = "Reconnecting...";
+    const std::string message = status.message.empty() ? runningMessage : status.message;
+    if (lastError != message) {
+      lastError = message;
       requestUpdate();
     }
     return false;
@@ -406,8 +463,19 @@ bool BluetoothSettingsActivity::pollReconnectJob() {
   }
 
   reconnectJobPending = false;
-  lastError = message.empty() ? (success ? "Reconnected" : "Reconnect failed") : message;
+  pairJobPending = false;
+  lastError = message.empty() ? (success ? (pairing ? "Paired remote" : "Reconnected")
+                                        : (pairing ? "Pairing failed" : "Reconnect failed")) : message;
   if (success) {
+    if (pairing) {
+      const std::string bondedAddr = btMgr->getBondedDeviceAddress();
+      const std::string bondedName = btMgr->getBondedDeviceName();
+      strncpy(SETTINGS.bleBondedDeviceAddr, bondedAddr.c_str(), sizeof(SETTINGS.bleBondedDeviceAddr) - 1);
+      SETTINGS.bleBondedDeviceAddr[sizeof(SETTINGS.bleBondedDeviceAddr) - 1] = '\0';
+      strncpy(SETTINGS.bleBondedDeviceName, bondedName.c_str(), sizeof(SETTINGS.bleBondedDeviceName) - 1);
+      SETTINGS.bleBondedDeviceName[sizeof(SETTINGS.bleBondedDeviceName) - 1] = '\0';
+      SETTINGS.bleBondedDeviceAddrType = btMgr->getBondedDeviceAddressType();
+    }
     SETTINGS.bluetoothEnabled = 1;
     SETTINGS.saveToFile();
 
@@ -496,10 +564,7 @@ bool BluetoothSettingsActivity::matchesBondedDevice(const BluetoothDevice& devic
       return true;
     }
 
-    if ((containsCaseInsensitive(SETTINGS.bleBondedDeviceName, "free3") &&
-         containsCaseInsensitive(device.name, "free3")) ||
-        (containsCaseInsensitive(SETTINGS.bleBondedDeviceName, "free2") &&
-         containsCaseInsensitive(device.name, "free2"))) {
+    if (isFreePageTurnerName(SETTINGS.bleBondedDeviceName) && isFreePageTurnerName(device.name)) {
       return true;
     }
   }
@@ -775,7 +840,9 @@ void BluetoothSettingsActivity::renderMainMenu() {
   // Status subheader
   std::string statusLine;
   if (btMgr) {
-    if (btMgr->isBondedReconnectInProgress()) {
+    if (btMgr->isPairingInProgress()) {
+      statusLine = "Pairing in progress";
+    } else if (btMgr->isBondedReconnectInProgress()) {
       statusLine = "Reconnect in progress";
     } else if (btMgr->isEnabled()) {
       auto connDevices = btMgr->getConnectedDevices();
@@ -808,9 +875,10 @@ void BluetoothSettingsActivity::renderMainMenu() {
   // Use GUI.drawList for consistent formatting with main settings
   const char* items[] = {
     btMgr && btMgr->isEnabled() ? "Disable Bluetooth" : "Enable Bluetooth",
-    btMgr && btMgr->isBondedReconnectInProgress() ? "Reconnecting..." : "Reconnect Remote",
+    btMgr && btMgr->isPairingInProgress() ? "Pairing..." :
+      (btMgr && btMgr->isBondedReconnectInProgress() ? "Reconnecting..." : "Reconnect Remote"),
     "Disconnect Device(s)",
-    "Scan Disabled",
+    btMgr && btMgr->isPairingInProgress() ? "Pairing..." : "Pair New Remote",
     "Remote Setup Wizard",
 #ifdef ENABLE_BT_DEBUG_MONITOR
     btMgr && btMgr->isDebugCaptureEnabled() ? "Disable BT Debug Capture" : "Enable BT Debug Capture",
@@ -843,6 +911,9 @@ void BluetoothSettingsActivity::renderMainMenu() {
           }
           return renderer.truncatedText(UI_10_FONT_ID, SETTINGS.bleBondedDeviceName,
                                         renderer.getScreenWidth() - UITheme::getInstance().getMetrics().contentSidePadding * 4);
+        }
+        if (i == 3 && SETTINGS.bleBondedDeviceName[0] != '\0') {
+          return std::string("Replace saved");
         }
         return std::string("");
       },
